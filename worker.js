@@ -1588,40 +1588,11 @@ async function resolveOneFormat(env, {
   appId,
   appSecret,
   slot,
-  allowLegacy = false,
+  allowLegacy = true,
 }) {
-  let modernError = null;
-
-  try {
-    const modern = await resolveModernFileUrl(env, {
-      trackId,
-      formatId,
-      intent,
-      token,
-      appId,
-      appSecret,
-      slot,
-    });
-
-    if (modern.parsed.ok && (modern.url || modern.url_template)) {
-      return modern;
-    }
-
-    modernError = new Error(
-      modern.parsed.json?.message ||
-      modern.parsed.json?.error ||
-      `Qobuz file/url failed with HTTP ${modern.parsed.status}`
-    );
-    modernError.status = modern.parsed.status;
-    modernError.qobuz = modern.parsed.json;
-  } catch (error) {
-    modernError = error;
-  }
-
-  if (!allowLegacy) {
-    throw modernError || new Error("Qobuz modern playback failed");
-  }
-
+  // Voria intentionally uses the legacy Qobuz signing flow for playback.
+  // Do NOT call session/start or file/url here. Those endpoints can return
+  // the newer segmented url_template format, which is not a direct stream URL.
   const legacy = await resolveLegacyFileUrl(env, {
     trackId,
     formatId,
@@ -1638,11 +1609,18 @@ async function resolveOneFormat(env, {
   const error = new Error(
     legacy.parsed.json?.message ||
     legacy.parsed.json?.error ||
-    modernError?.message ||
-    `Qobuz playback failed with HTTP ${legacy.parsed.status}`
+    `Qobuz legacy playback failed with HTTP ${legacy.parsed.status}`
   );
-  error.status = legacy.parsed.status || modernError?.status;
-  error.qobuz = legacy.parsed.json || modernError?.qobuz;
+  error.status = legacy.parsed.status;
+  error.qobuz = legacy.parsed.json;
+
+  if (legacy.parsed.status === 400 &&
+      String(legacy.parsed.json?.message || legacy.parsed.json?.error || "")
+        .toLowerCase()
+        .includes("request_sig")) {
+    error.code = "INVALID_REQUEST_SIGNATURE";
+  }
+
   throw error;
 }
 
